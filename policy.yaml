@@ -1,0 +1,38 @@
+# Organizational thresholds the rule pack references but never defines.
+#
+# Rules/02 NET-03 says "organizationally approved max-age"; NET-02 says "meets
+# organization baseline"; PERF-02 says "organization-approved SLOs". No numbers
+# are given anywhere in the pack. Without these, those controls cannot honestly
+# be PASS or FAIL — the engine returns WARN and says the policy is unset.
+#
+# Set a value to enable a deterministic verdict for that control.
+
+hsts:
+  min_max_age_seconds: 15768000    # 6 months, the common baseline
+  require_include_subdomains: false
+  require_preload: false
+
+tls:
+  min_protocol: TLSv1.2
+  forbidden_protocols: [SSLv2, SSLv3, TLSv1, TLSv1.1]
+  min_days_until_expiry: 14
+
+performance_slo:
+  # PERF-02. Null means INFORMATIONAL only — we report the measurement and
+  # decline to grade it.
+  ttfb_ms_p95: null
+  page_load_ms_p95: null
+
+cookies:
+  # WEB-05. Names matching these are treated as session/auth cookies and are
+  # held to the strict flag requirements.
+  session_name_patterns: ["sess", "sid", "auth", "token", "jwt", "login", "csrf"]
+  require_secure: true
+  require_httponly: true
+  allowed_samesite: [Strict, Lax]
+
+csp:
+  # WEB-01
+  forbid_unsafe_inline: true
+  forbid_unsafe_eval: true
+  require_frame_ancestors: true    # WEB-04

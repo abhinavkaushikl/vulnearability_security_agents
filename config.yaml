@@ -1,0 +1,77 @@
+# Website Security & Performance Assessment System — runtime configuration.
+# Nothing in app/ hardcodes these values.
+
+rules:
+  # Case-insensitive: the repo directory is `Rules/`, which breaks on
+  # case-sensitive filesystems if hardcoded lowercase.
+  directory: Rules
+  # Files without a "Control family:" marker are meta, not rules.
+  meta_files: [00_README.md, 18_rule_object_schema.md,
+               19_test_modes_safety.md, 20_framework_mapping.md]
+
+browser:
+  type: chromium          # CDP throttling is Chromium-only; others disable profiles
+  headless: true
+  timeout_ms: 30000
+  navigation_timeout_ms: 45000
+  viewport: {width: 1440, height: 900}
+  locale: en-US
+  ignore_https_errors: false   # TLS errors are EVIDENCE (NET-04), not noise
+
+assessment:
+  mode: passive           # passive | authenticated. Anything but passive needs
+                          # an authorization_reference (GOV-02).
+  authorization_reference: null
+  max_pages: 10
+  max_navigation_count: 20
+  max_concurrent_contexts: 4
+  max_concurrent_evaluations: 4   # bounded fan-out for a local 7B model
+  timeout_seconds: 900
+  stay_in_scope: true
+  probe_well_known: true
+  probe_error_page: true          # one benign 404, non-destructive
+  collect_tls: true
+  collect_dns: true
+  run_axe: true
+
+performance:
+  enabled: true
+  iterations: 3
+  cooldown_seconds: 2
+  per_profile_budget_seconds: 90
+  profiles: [fast, 4g, 3g, slow]
+
+network_profiles:
+  fast: {download_mbps: 100.0, upload_mbps: 50.0,  latency_ms: 5}
+  4g:   {download_mbps: 9.0,   upload_mbps: 3.0,   latency_ms: 85}
+  3g:   {download_mbps: 1.6,   upload_mbps: 0.75,  latency_ms: 300}
+  slow: {download_mbps: 0.4,   upload_mbps: 0.4,   latency_ms: 800}
+
+screenshots:
+  enabled: true
+  full_page: false
+
+tracing:
+  enabled: false          # off by default: traces can capture sensitive data
+
+llm:
+  provider: qwen
+  model: qwen3-coder
+  fallback_models: [qwen2.5-coder:7b, qwen2.5:7b]
+  endpoint: http://localhost:11434
+  temperature: 0.0
+  timeout_seconds: 120
+  max_retries: 2
+  cache_dir: .cache/rule_interpretations
+  # If the LLM is unreachable, evaluate deterministically and mark the rest
+  # UNKNOWN rather than failing the run.
+  required: false
+
+storage:
+  type: excel             # excel | postgres
+  excel_path: artifacts/{assessment_id}/assessment_results.xlsx
+  postgres_dsn: null
+
+logging:
+  level: INFO
+  file: artifacts/{assessment_id}/logs/assessment.log
