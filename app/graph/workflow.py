@@ -27,7 +27,8 @@ import logging
 from langgraph.graph import END, START, StateGraph
 
 from app.graph.nodes import (aggregate_node, collect_evidence_node,
-                             evaluate_node, load_rules_node, performance_node,
+                             evaluate_node, load_rules_node,
+                             orchestrate_node, performance_node,
                              persist_node, plan_node)
 from app.graph.state import AssessmentState
 from app.models.assessment import AssessmentStatus
@@ -48,12 +49,16 @@ def _after_collect(state: AssessmentState) -> list[str]:
     return ["evaluate", "performance"]
 
 
-def build_workflow():
-    """Compile the assessment graph."""
+def build_workflow(*, agentic: bool = True):
+    """Compile the assessment graph.
+
+    agentic=True (default): orchestrator agent decides which rules to evaluate.
+    agentic=False: deterministic planner evaluates all passive rules.
+    """
     g = StateGraph(AssessmentState)
 
     g.add_node("load_rules", load_rules_node)
-    g.add_node("plan", plan_node)
+    g.add_node("plan", orchestrate_node if agentic else plan_node)
     g.add_node("collect_evidence", collect_evidence_node)
     g.add_node("evaluate", evaluate_node)
     g.add_node("performance", performance_node)

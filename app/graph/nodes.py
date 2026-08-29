@@ -14,6 +14,7 @@ from pathlib import Path
 from app.agents.aggregator import (family_coverage, validate_results,
                                    write_summary)
 from app.agents.browser_agent import EvidenceCollector
+from app.agents.orchestrator import Orchestrator
 from app.agents.performance_agent import PerformanceAgent
 from app.agents.planner import Planner
 from app.graph.state import AssessmentState
@@ -50,8 +51,69 @@ async def load_rules_node(state: AssessmentState) -> dict:
 
 
 # --------------------------------------------------------------------------
+async def orchestrate_node(state: AssessmentState) -> dict:
+    """ORCHESTRATE. Agent decides which rules to evaluate and which tools to
+    call. Falls back to deterministic planner when LLM is unavailable."""
+    s = state["settings"]
+    rules = state.get("rules", [])
+    errors: list[ComponentError] = []
+    agentic = state.get("llm_available", False) and s.assessment.mode != "deterministic"
+
+    if agentic:
+        try:
+            # Import registry lazily so registration happens at first use
+            import app.tools.register_tools  # noqa: F401
+            from app.tools.registry import registry
+
+            orch = Orchestrator(
+                state["provider"], registry,
+                llm_available=True)
+            orch_plan = await orch.run(state["target_url"], rules)
+
+            # Filter rules to what orchestrator selected
+            if orch_plan.selected_rule_ids:
+                selected_ids = set(orch_plan.selected_rule_ids)
+                rules = [r for r in rules if r.control_id in selected_ids]
+                log.info("ORCHESTRATOR: selected %d rules from %d total "
+                         "(families: %s)",
+                         len(rules), len(state.get("rules", [])),
+                         ", ".join(orch_plan.relevant_families))
+            for step in orch_plan.steps:
+                log.info("ORCHESTRATOR step %d: [%s] %s%s",
+                         step.step, step.action.value,
+                         step.tool_name or "", f" — {step.thought[:60]}")
+        except Exception as exc:                                    # noqa: BLE001
+            errors.append(_err(state, "orchestrator", exc))
+            log.warning("orchestrator failed, falling back to deterministic planner")
+            agentic = False
+
+    # Always run the planner to build the action list — orchestrator selects
+    # rules, planner builds the execution plan from them.
+    planner = Planner(state["provider"], s,
+                      llm_available=state.get("llm_available", False))
+    try:
+        await planner.interpret_all(rules)
+    except Exception as exc:                                    # noqa: BLE001
+        errors.append(_err(state, "rule_interpretation", exc))
+    try:
+        plan = planner.build_plan(state["target_url"], rules)
+    except Exception as exc:                                    # noqa: BLE001
+        return {"status": AssessmentStatus.FAILED,
+                "errors": errors + [_err(state, "build_plan", exc, fatal=True)]}
+
+    log.info("PLAN: %d evaluable, %d not testable, %d collectors, ~%d requests",
+             len(plan.evaluable_rules), len(plan.not_testable_rules),
+             len(plan.required_collectors), plan.estimated_requests)
+    for note in plan.notes:
+        log.info("PLAN: %s", note)
+    return {"plan": plan, "rules": rules, "errors": errors,
+            "status": AssessmentStatus.DISCOVERING}
+
+
+# --------------------------------------------------------------------------
 async def plan_node(state: AssessmentState) -> dict:
-    """PLAN_ASSESSMENT. Interpret rules (cached), then union collector sets."""
+    """PLAN_ASSESSMENT. Interpret rules (cached), then union collector sets.
+    Legacy deterministic planner — kept for --no-llm and backward compat."""
     s = state["settings"]
     rules = state.get("rules", [])
     planner = Planner(state["provider"], s,

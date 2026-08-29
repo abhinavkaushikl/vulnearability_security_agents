@@ -64,6 +64,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--headed", action="store_true", help="show the browser")
     p.add_argument("--dry-run", action="store_true",
                    help="print the plan and request budget; open no browser")
+    p.add_argument("--no-agent", action="store_true",
+                   help="disable the orchestrator agent; use deterministic planner")
     p.add_argument("--output", help="override the report output directory")
     p.add_argument("--log-level", default=None)
     return p.parse_args(argv)
@@ -139,7 +141,8 @@ async def run_assessment(args: argparse.Namespace) -> int:
 
     session = BrowserSession(settings, budget, artifact_dir)
     repository = build_repository(settings, assessment_id)
-    workflow = build_workflow()
+    use_agent = llm_available and not args.no_llm and not getattr(args, "no_agent", False)
+    workflow = build_workflow(agentic=use_agent)
 
     state: AssessmentState = {
         "assessment_id": assessment_id,
