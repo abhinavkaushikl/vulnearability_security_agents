@@ -1,0 +1,128 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ tokens */
+@theme {
+  --color-void:    #050506;   /* the room the machine runs in */
+  --color-pit:     #000000;
+  --color-surface: #0c0c0f;
+  --color-raised:  #131319;
+  --color-line:    #1e1e24;
+  --color-line-lit:#2e2e38;
+  --color-bone:    #edeae3;   /* warm off-white; pure #fff reads clinical */
+  --color-ash:     #8b8b93;
+  --color-dim:     #55555e;
+  --color-phos:    #ffb000;   /* P3 amber phosphor — the agent's own light */
+  --color-phos-dk: #7a5400;
+  --color-anomaly: #ff2d55;   /* the only other chromatic value on the page */
+
+  --font-display: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", monospace;
+
+  --ease-spring: linear(0, 0.006, 0.025, 0.101, 0.539, 0.802, 0.941, 0.993,
+                        1.05, 1.037, 1.007, 0.998, 1);
+}
+
+/* ------------------------------------------------------------------ base */
+:root { color-scheme: dark; }
+
+html {
+  background: var(--color-pit);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background: var(--color-void);
+  color: var(--color-bone);
+  font-family: var(--font-display);
+  overflow-x: hidden;
+  font-synthesis-weight: none;
+}
+
+/* The custom cursor replaces the native one only where a pointer exists. */
+@media (hover: hover) and (pointer: fine) {
+  body.aq-cursor, body.aq-cursor * { cursor: none; }
+}
+
+::selection { background: var(--color-phos); color: #000; }
+
+:focus-visible {
+  outline: 2px solid var(--color-phos);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* The portal frame lights on focus, which is a stronger and higher-contrast
+   indicator than the ring. Doubling them reads as a mistake. */
+#target:focus-visible { outline: none; }
+
+/* ------------------------------------------------------------------ type */
+.h-display {
+  font-weight: 700;
+  letter-spacing: -0.045em;
+  line-height: 0.9;
+  font-stretch: 112%;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ash);
+}
+
+.rule { border-top: 1px solid var(--color-line); }
+
+/* Pixel surfaces must never be smoothed by the compositor. */
+.pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Scanline veil — one repeating-gradient, no image, no cost. */
+.crt::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.028) 0 1px,
+    transparent 1px 3px
+  );
+  mix-blend-mode: overlay;
+}
+
+.vignette {
+  background: radial-gradient(
+    ellipse 120% 80% at 50% 45%,
+    transparent 30%,
+    rgba(0, 0, 0, 0.55) 100%
+  );
+}
+
+/* ------------------------------------------------------------------ a11y */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    body.aq-cursor, body.aq-cursor * { cursor: auto; }
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
