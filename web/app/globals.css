@@ -52,6 +52,10 @@ body {
   border-radius: 2px;
 }
 
+/* The portal frame lights on focus, which is a stronger and higher-contrast
+   indicator than the ring. Doubling them reads as a mistake. */
+#target:focus-visible { outline: none; }
+
 /* ------------------------------------------------------------------ type */
 .h-display {
   font-weight: 700;
