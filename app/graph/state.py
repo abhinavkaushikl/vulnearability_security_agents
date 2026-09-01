@@ -49,6 +49,12 @@ class AssessmentState(TypedDict, total=False):
     family_coverage: dict
 
     # --- runtime collaborators
+    # Optional. When present, a long-running node calls it as
+    # progress(node_name, detail) so a caller can stream stage changes that
+    # the graph's own state snapshots cannot expose: EVALUATE and PERFORMANCE
+    # are one superstep, so their individual completions are invisible from
+    # outside. The CLI leaves it unset and nothing changes.
+    progress: object
     provider: object
     llm_available: bool
     session: object

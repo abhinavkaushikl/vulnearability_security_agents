@@ -223,7 +223,14 @@ class RuleEvaluator:
                       or "no evidence statement was produced"),
             observed_value=None if downgrade else proposal.observed_value,
             source_of_evidence=f"collectors[{collectors}] @ {bundle.final_url or bundle.target_url}",
+            # An undecided verdict must always say why: §7 rests on the reader
+            # being able to tell "we looked and could not decide" from "this is
+            # out of scope for a browser". Small models often omit the field,
+            # so fall back rather than emit a reasonless UNKNOWN.
             unknown_reason=(downgrade or proposal.unknown_reason
+                            or proposal.evidence
+                            or "the evaluator returned no reason for the "
+                               "undecided verdict"
                             if final in (NativeResult.NOT_TESTABLE,
                                          NativeResult.WARN,
                                          NativeResult.INFORMATIONAL)

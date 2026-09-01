@@ -22,6 +22,13 @@ from urllib.parse import urlparse
 
 import httpx
 
+try:                                    # optional: only needed under CERT_NONE
+    from cryptography import x509
+    from cryptography.x509.oid import ExtensionOID, NameOID
+except ImportError:                     # pragma: no cover - degrades to error
+    x509 = None                         # type: ignore[assignment]
+    ExtensionOID = NameOID = None       # type: ignore[assignment]
+
 from app.models.evidence import (DnsEvidence, ErrorPageEvidence, RedirectHop,
                                  TlsEvidence, WellKnownEvidence)
 from app.safety import redaction
@@ -57,9 +64,15 @@ async def collect_tls(hostname: str, port: int = 443,
                     out.cipher = cipher[0] if cipher else None
                     cert = tls.getpeercert()
                     if not cert:
+                        # verify_mode=CERT_NONE (set above so a hostname
+                        # mismatch is REPORTED, not raised) makes the stdlib
+                        # skip decoding, so getpeercert() is empty. The DER is
+                        # still on the wire — parse it ourselves.
                         der = tls.getpeercert(binary_form=True)
                         if der:
-                            out.error = "peer certificate not parseable"
+                            _parse_der(der, out, hostname)
+                        else:
+                            out.error = "peer presented no certificate"
                         return out
                     subject = dict(x[0] for x in cert.get("subject", ()))
                     issuer = dict(x[0] for x in cert.get("issuer", ()))
@@ -85,6 +98,46 @@ async def collect_tls(hostname: str, port: int = 443,
     except Exception as exc:                                    # noqa: BLE001
         ev.error = f"{type(exc).__name__}: {exc}"
     return ev
+
+
+def _parse_der(der: bytes, out: TlsEvidence, hostname: str) -> None:
+    """Populate cert fields from raw DER, mirroring the getpeercert() path.
+
+    NET-02 and NET-04 need the subject, issuer and expiry, none of which the
+    stdlib decodes under CERT_NONE. Dates are rendered in the same format
+    getpeercert() uses so both paths are indistinguishable downstream.
+    """
+    if x509 is None:
+        out.error = ("peer certificate not parseable: install `cryptography` "
+                     "to decode it under CERT_NONE")
+        return
+    try:
+        cert = x509.load_der_x509_certificate(der)
+    except Exception as exc:                                    # noqa: BLE001
+        out.error = f"peer certificate not parseable: {type(exc).__name__}"
+        return
+
+    def _first(name, oid) -> str | None:
+        attrs = name.get_attributes_for_oid(oid)
+        return attrs[0].value if attrs else None
+
+    out.subject_cn = _first(cert.subject, NameOID.COMMON_NAME)
+    out.issuer = (_first(cert.issuer, NameOID.COMMON_NAME)
+                  or _first(cert.issuer, NameOID.ORGANIZATION_NAME))
+    try:
+        ext = cert.extensions.get_extension_for_oid(
+            ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+        out.san = ext.value.get_values_for_type(x509.DNSName)
+    except x509.ExtensionNotFound:
+        out.san = []
+
+    fmt = "%b %e %H:%M:%S %Y GMT"
+    not_before = cert.not_valid_before_utc
+    not_after = cert.not_valid_after_utc
+    out.not_before = not_before.strftime(fmt)
+    out.not_after = not_after.strftime(fmt)
+    out.days_until_expiry = (not_after - datetime.now(timezone.utc)).days
+    out.hostname_matches = _hostname_matches(hostname, out.san, out.subject_cn)
 
 
 def _hostname_matches(hostname: str, san: list[str], cn: str | None) -> bool:
