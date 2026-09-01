@@ -63,6 +63,69 @@ class PerformanceConfig(BaseModel):
     profiles: list[str] = Field(default_factory=lambda: ["fast", "4g", "3g", "slow"])
 
 
+class BehaviourConfig(BaseModel):
+    """User Behaviour Agent. Additive: nothing else reads these keys.
+
+    The ceilings are the agent's brakes (see app/behaviour/agent.py). They are
+    configuration rather than constants because a five-page brochure site and
+    a large catalogue want very different budgets, and the alternative — an
+    agent that decides its own limits — is the one thing an autonomous loop
+    must never be allowed to do.
+    """
+
+    enabled: bool = True
+    #: Hard ceiling on dispatched actions for a whole session.
+    max_actions: int = 60
+    #: Ceiling per journey, so one stubborn flow cannot consume the session.
+    max_steps_per_journey: int = 10
+    #: Navigations this agent may spend. Counted in the SAME TrafficBudget as
+    #: the security engine, so a combined run cannot exceed the site's budget
+    #: by running both.
+    max_navigations: int = 24
+    #: Human pacing multiplier. 0 removes every pause — faster, and less like
+    #: a person, which the report states.
+    pacing: float = 1.0
+    #: How long the DOM must be still before an interaction counts as complete.
+    settle_quiet_ms: int = 260
+    #: Ceiling on waiting for that stillness.
+    settle_max_ms: int = 4500
+    #: Elements shown to the observer per page. Beyond this a page is a
+    #: haystack rather than a menu.
+    max_elements: int = 220
+    keyboard_walk_steps: int = 12
+    screenshots: bool = True
+    #: Fixes the jitter in human pacing so a run can be reproduced exactly.
+    seed: int | None = None
+    timeout_seconds: int = 600
+    #: Ask the model for EVERY step, not just the plan.
+    #:
+    #: Off by default, and the default is the important one. The model's
+    #: judgement is worth having where it is scarce — what this site is, and
+    #: what journeys a visitor would take — andthat is two calls. Asking it again
+    #: for every individual click adds one round trip per action: against a
+    #: local 7B that is ~45s each, so a 60-action session takes 45 minutes and
+    #: the agent spends all of it thinking instead of measuring.
+    #:
+    #: It is also the repo's own house rule: the LLM plans, Python executes.
+    #: The deterministic decision already resolves a planned step against the
+    #: observed elements; the model is still consulted on ADAPT, where a
+    #: failure has actually happened and the extra judgement earns its latency.
+    llm_decides_steps: bool = False
+    #: How long any single model call may take before the agent gives up on
+    #: it and uses the deterministic answer instead.
+    #:
+    #: `llm.timeout_seconds` is the HTTP timeout and defaults to 120, with two
+    #: retries behind it — six minutes in the worst case, during which the
+    #: agent has measured nothing. A local 7B asked for a nested journey plan
+    #: routinely takes over a minute, and the interface can only show the same
+    #: state the whole time.
+    #:
+    #: So this is a deadline, not a timeout: when it passes, the heuristic
+    #: answer is used, the report records `derived_by: heuristic`, and the
+    #: agent gets on with the thing it is actually here to do.
+    llm_call_timeout_seconds: float = 45.0
+
+
 class ScreenshotConfig(BaseModel):
     enabled: bool = True
     full_page: bool = False
@@ -140,6 +203,7 @@ class Settings(BaseModel):
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     assessment: AssessmentConfig = Field(default_factory=AssessmentConfig)
     performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
+    behaviour: BehaviourConfig = Field(default_factory=BehaviourConfig)
     screenshots: ScreenshotConfig = Field(default_factory=ScreenshotConfig)
     tracing: TracingConfig = Field(default_factory=TracingConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)

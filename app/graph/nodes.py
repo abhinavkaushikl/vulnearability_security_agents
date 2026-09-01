@@ -20,6 +20,7 @@ from app.agents.planner import Planner
 from app.graph.state import AssessmentState
 from app.models.assessment import (Assessment, AssessmentStatus, ComponentError)
 from app.models.evidence import EvidenceBundle
+from app.models.performance import ProfileStatus
 from app.models.results import ResultTally
 from app.safety import antibot
 from app.tools.evaluation import RuleEvaluator
@@ -37,6 +38,21 @@ def _err(state: AssessmentState, component: str, exc: Exception,
 
 
 # --------------------------------------------------------------------------
+def _notify(state: AssessmentState, node: str, detail: str = "") -> None:
+    """Report a stage change to an optional caller-supplied hook.
+
+    Best-effort and never fatal: a broken listener must not affect an
+    assessment. Nodes call this only to describe work they are already doing.
+    """
+    hook = state.get("progress")
+    if hook is None:
+        return
+    try:
+        hook(node, detail)
+    except Exception:                                           # noqa: BLE001
+        log.debug("progress hook raised; ignored", exc_info=True)
+
+
 async def load_rules_node(state: AssessmentState) -> dict:
     """LOAD_RULES. Pure Python: parse the Markdown pack. No LLM."""
     s = state["settings"]
@@ -176,6 +192,9 @@ async def evaluate_node(state: AssessmentState) -> dict:
     bundle = state["evidence"]
     signal = state.get("anti_bot")
 
+    _notify(state, "evaluate",
+            f"{len(rules)} controls against frozen evidence. Zero traffic.")
+
     evaluator = RuleEvaluator(
         state["provider"], llm_available=state.get("llm_available", False),
         max_concurrency=s.assessment.max_concurrent_evaluations)
@@ -235,6 +254,10 @@ async def performance_node(state: AssessmentState) -> dict:
 
     log.info("PERFORMANCE: %d measurements across %d profiles, %d statistics rows",
              len(raw), len(outcomes), len(stats))
+    completed = sum(1 for o in outcomes if o.status is ProfileStatus.COMPLETED)
+    _notify(state, "performance",
+            f"{completed} of {len(outcomes)} network profiles completed, "
+            f"in series.")
     return {"performance_raw": raw, "performance_stats": stats,
             "profile_outcomes": outcomes}
 

@@ -12,6 +12,9 @@ playwright>=1.44
 # --- evidence collectors ---
 httpx>=0.27
 dnspython>=2.6
+# NET-02/NET-04: decodes the peer certificate, which the stdlib leaves
+# undecoded under CERT_NONE (set so a hostname mismatch is reported, not raised)
+cryptography>=42.0
 
 # --- persistence ---
 pandas>=2.2
@@ -24,3 +27,7 @@ rich>=13.7
 # --- tests ---
 pytest>=8.2
 pytest-asyncio>=0.23
+
+# --- api service (app/api) ---
+fastapi>=0.115
+uvicorn[standard]>=0.30

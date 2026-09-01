@@ -74,6 +74,19 @@ class Planner:
                 required_collectors=[], evaluable_at_l1=False,
                 not_observable=["interpreter did not return a usable mapping"])
 
+        # A rule the pack marks passively automatable must map to at least one
+        # collector. An empty set means the interpreter failed — small models
+        # echo the schema's own placeholder text back as valid JSON — and
+        # caching that would strand the control at NOT_TESTABLE on every future
+        # run, since the cache is keyed on content_hash and never expires.
+        # Return it for this run, but never persist it.
+        if not interp.required_collectors:
+            log.warning("interpreter returned no collectors for %s; not caching",
+                        rule.control_id)
+            return RuleInterpretation(
+                required_collectors=[], evaluable_at_l1=False,
+                not_observable=["interpreter returned an empty collector set"])
+
         self.cache.put(rule.content_hash, interp)
         return interp
 

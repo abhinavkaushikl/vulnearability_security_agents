@@ -1,0 +1,16 @@
+* { box-sizing: border-box; }
+body { font: 16px/1.5 system-ui, sans-serif; margin: 0; color: #111; }
+nav { display: flex; gap: 1rem; padding: 1rem; align-items: center;
+      border-bottom: 1px solid #ddd; }
+main { padding: 1.5rem; max-width: 900px; }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+.product { border: 1px solid #eee; padding: 1rem; }
+.tall { min-height: 1400px; }
+.filler { max-width: 60ch; }
+.icon { width: 32px; height: 32px; }
+.skip { position: absolute; left: -9999px; }
+.skip:focus { left: 1rem; }
+/* Deliberate defect: the focus outline is removed and never replaced. */
+button:focus, a:focus, input:focus { outline: none; }
+#suggest { border: 1px solid #ccc; padding: .5rem; list-style: none; }
+.banner { background: #ffe; padding: 2rem; }

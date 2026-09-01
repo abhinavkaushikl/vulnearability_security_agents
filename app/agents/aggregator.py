@@ -44,6 +44,17 @@ def validate_results(results: list[SecurityResult]) -> list[SecurityResult]:
             r.native_result = NativeResult.NOT_TESTABLE
             r.result = project(NativeResult.NOT_TESTABLE)
             r.confidence = 0.0
+
+        # Every undecided verdict states why. Without this a reader cannot
+        # separate "we looked and could not decide" from "out of scope for a
+        # browser", which is the distinction §7 calls the report's integrity.
+        if r.native_result in (NativeResult.NOT_TESTABLE, NativeResult.WARN,
+                               NativeResult.INFORMATIONAL) \
+                and not (r.unknown_reason or "").strip():
+            log.warning("%s: %s carried no reason — recording that it is absent",
+                        r.rule_id, r.native_result.value)
+            r.unknown_reason = (r.evidence or "").strip() or (
+                "no reason was recorded for this undecided verdict")
         out.append(r)
     return out
 
