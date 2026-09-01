@@ -3,6 +3,26 @@
 import { useEffect, useRef, useState } from "react";
 import { useMagnetic, prefersReduced } from "@/lib/motion";
 
+export type Mode = "security" | "behaviour";
+
+/** The two things the agent can be sent in to do. They are different runs
+ *  against different questions, so the choice is made before deployment
+ *  rather than presented as a toggle on a result. */
+const MODES: { id: Mode; label: string; line: string; cursor: string }[] = [
+  {
+    id: "behaviour",
+    label: "Behaviour",
+    line: "An AI user browses the site and we measure what it experiences.",
+    cursor: "DEPLOY USER AGENT",
+  },
+  {
+    id: "security",
+    label: "Security",
+    line: "144 controls read from the rule pack, evaluated against one page load.",
+    cursor: "DEPLOY AGENT",
+  },
+];
+
 /**
  * The gateway. On focus, particles drift inward and the frame lights; the
  * submit control is a hexagonal aperture rather than a rectangle, and it
@@ -11,9 +31,13 @@ import { useMagnetic, prefersReduced } from "@/lib/motion";
 export default function Portal({
   onDeploy,
   busy,
+  mode = "behaviour",
+  onMode,
 }: {
   onDeploy: (url: string) => void;
   busy: boolean;
+  mode?: Mode;
+  onMode?: (m: Mode) => void;
 }) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
@@ -97,8 +121,40 @@ export default function Portal({
     onDeploy(parsed.toString());
   };
 
+  const active = MODES.find((m) => m.id === mode) ?? MODES[0];
+
   return (
     <section className="relative mx-auto mt-16 w-full max-w-3xl px-6 md:mt-20">
+      {/* Mission select. Two runs, two questions — never one with a switch. */}
+      <div role="radiogroup" aria-label="What to send the agent in to do"
+           className="mb-6 flex flex-wrap items-center gap-x-8 gap-y-3">
+        {MODES.map((m) => (
+          <button
+            key={m.id}
+            type="button"
+            role="radio"
+            aria-checked={m.id === mode}
+            disabled={busy}
+            onClick={() => onMode?.(m.id)}
+            data-cursor={m.label.toUpperCase()}
+            className="mono relative pb-2 transition-colors disabled:opacity-40"
+            style={{ color: m.id === mode ? "var(--color-bone)"
+                                          : "var(--color-dim)" }}
+          >
+            {m.label}
+            <span
+              className="absolute inset-x-0 bottom-0 block h-px"
+              style={{
+                background: "var(--color-phos)",
+                transform: m.id === mode ? "scaleX(1)" : "scaleX(0)",
+                transformOrigin: "left",
+                transition: "transform 460ms var(--ease-spring)",
+              }}
+            />
+          </button>
+        ))}
+      </div>
+
       <form onSubmit={submit} noValidate>
         <div
           className="relative flex items-center gap-3 px-5 py-4 transition-[border-color,box-shadow,transform] duration-500 md:gap-5 md:px-7 md:py-6"
@@ -152,8 +208,8 @@ export default function Portal({
             ref={btn}
             type="submit"
             disabled={busy}
-            data-cursor="DEPLOY AGENT"
-            aria-label="Deploy agent to analyze this website"
+            data-cursor={active.cursor}
+            aria-label={`Deploy the ${active.label.toLowerCase()} agent to this website`}
             className="relative z-10 grid h-14 w-14 shrink-0 place-items-center transition-opacity disabled:opacity-40 md:h-16 md:w-16"
           >
             <svg viewBox="0 0 64 64" className="absolute inset-0 h-full w-full">
@@ -184,13 +240,20 @@ export default function Portal({
         </div>
       </form>
 
+      <p className="mt-6 text-center leading-relaxed"
+         style={{ color: "var(--color-ash)" }}>
+        {active.line}
+      </p>
+
       <p
         id="target-error"
         role={error ? "alert" : undefined}
         className="mono mt-5 min-h-4 text-center"
         style={{ color: error ? "var(--color-anomaly)" : "var(--color-dim)" }}
       >
-        {error ?? "Passive mode // 1 navigation + 4 auxiliary requests // nothing submitted"}
+        {error ?? (mode === "behaviour"
+          ? "Autonomous session // nothing purchased, submitted or deleted // one host only"
+          : "Passive mode // 1 navigation + 4 auxiliary requests // nothing submitted")}
       </p>
     </section>
   );

@@ -72,6 +72,35 @@ python -m app.main --url https://example.com \
     --families NET,WEB --network-profiles fast,3g --iterations 2
 ```
 
+### The other agent
+
+The same repository also ships a **User Behaviour Agent** — an autonomous AI
+user that browses the site and measures what it experiences. It answers a
+different question from the rule pack and is documented in full in §15.
+
+```bash
+python -m app.behaviour --url https://example.com --dry-run
+python -m app.behaviour --url https://example.com
+```
+
+### The web interface
+
+The same pipeline, driven from a browser instead of a terminal. Two processes:
+
+```bash
+python -m app.api.server        # API on 127.0.0.1:8000  <- the entry point
+cd web && npm run dev           # interface on :3000
+```
+
+`web/.env.local` holds `NEXT_PUBLIC_AGENTQA_API=http://127.0.0.1:8000`. With
+that variable **unset** the interface falls back to a local simulation with
+hardcoded findings — useful for design work, and never to be mistaken for a
+result. `web/lib/api.ts :: isLive()` is the switch, and
+`web/lib/behaviourApi.ts` has the same one for the behaviour surface.
+
+The interface offers both agents from one portal: **Behaviour** deploys the
+autonomous user (§15), **Security** runs the rule-pack assessment.
+
 Optional local model (improves coverage; the system runs without it):
 
 ```bash
@@ -178,13 +207,19 @@ app/
   llm/        base.py qwen.py cache.py prompts.py
   agents/     planner.py browser_agent.py performance_agent.py aggregator.py
   graph/      state.py nodes.py workflow.py
+  behaviour/  the User Behaviour Agent — see §15. Shares the browser, the
+              LLM provider, the traffic budget and app/safety/ with the
+              assessment above, and nothing else. Never reads Rules/.
+  api/        server.py runner.py serializers.py progress.py behaviour.py
   repositories/ base.py excel.py postgres.py
   safety/     redaction.py antibot.py limits.py
   main.py     CLI
+web/                        Next.js interface (see §2)
 tests/
   unit/         no network, no browser
   integration/  real Chromium against a LOCAL fixture site only
-  fixtures/     server.py + site/ (deliberately broken headers)
+  fixtures/     server.py + site/       (deliberately broken headers)
+                ux_server.py + ux_site/ (deliberately broken UX — §15)
 artifacts/<assessment_id>/  screenshots/ traces/ logs/ *.xlsx
 config.yaml  policy.yaml  requirements.txt  .env.example
 ```
@@ -363,7 +398,39 @@ because both fork branches append to it. `nodes.py` has one function per phase,
 each defensive — a failure records a `ComponentError` and returns usable state.
 `workflow.py` compiles the graph and documents the fork.
 
-### 5.8 `app/repositories/`
+### 5.8 `app/api/` — the HTTP surface
+
+A shell around the same compiled graph, so the API cannot drift into
+evaluating rules differently from the CLI. It holds no rule knowledge.
+
+    POST   /analyze             -> {"assessment_id": ...}
+    GET    /analyze/{id}/stream -> text/event-stream of Progress
+    GET    /analyze/{id}        -> Report (409 while still running)
+    DELETE /analyze/{id}        -> cancel
+    GET    /health · GET /analyze
+
+* **`runner.py`** — builds the identical state dict as `main.py` and invokes
+  the identical workflow. `RunManager` bounds concurrency (2) and retains the
+  last 50 finished runs. Every safety property carries over because each is
+  structural: the `TrafficBudget` still attributes and caps every request, and
+  the browser still closes in a `finally` on every path.
+* **`progress.py`** — maps graph nodes onto the stages `web/lib/stages.ts`
+  already names. The `requests` counter is read live from the budget, so the
+  number on screen is the number the target actually received. `pct` is the
+  one interpolated value, and it never touches a verdict.
+* **`serializers.py`** — projects terminal state onto `web/lib/types.ts`.
+  A missing metric serialises as `null`, never `0`, exactly as §9 requires.
+* **Streaming through the fork.** `EVALUATE` and `PERFORMANCE` are a single
+  superstep, so state snapshots cannot expose their individual completions.
+  `AssessmentState.progress` is an optional hook those two nodes call; the CLI
+  leaves it unset and behaves exactly as before.
+
+**Binding.** Defaults to `127.0.0.1`. Exposing this on a public interface would
+let anyone point it at anyone, which is the authorization boundary in §11
+undone by deployment rather than by code. `AGENTQA_HOST` overrides it; §11
+still applies to whoever does.
+
+### 5.9 `app/repositories/`
 
 `base.py` defines the Protocol and `build_repository()` factory. **No agent,
 node or tool imports openpyxl or asyncpg.** `excel.py` buffers rows and writes
@@ -371,7 +438,7 @@ one workbook atomically (temp file + `os.replace`). `postgres.py` is
 schema-complete with the same Protocol; `commit()` raises `NotImplementedError`
 with instructions. Migration replaces one class and one config line.
 
-### 5.9 `app/safety/`
+### 5.10 `app/safety/`
 
 * **`redaction.py`** — applied at **capture**, not at report time.
   `redact_headers`, `redact_set_cookie` (keeps attributes, drops the value —
@@ -589,6 +656,14 @@ third-party script without SRI, a JWT in `localStorage`, an AWS key and a
 password literal in `app.js`, a stack-trace-leaking 404, and version-disclosing
 headers.
 
+`tests/fixtures/ux_site/` is the behaviour agent's target and is broken in a
+different way: a button with no handler bound, a 620 ms search debounce, an
+add-to-cart that fetches with no pending state, a banner injected after load,
+an icon button with no accessible name, `outline: none` with no replacement,
+and — planted so the agent can refuse them — "Buy now", "Place order", "Empty
+the cart" and a card-number field. Its server answers **405 to every POST**,
+so a form submission that ever landed would fail the suite.
+
 Notable guarantees under test: the loader parses exactly 144 controls and the
 tier distribution matches the pack · a new family file needs zero code change ·
 `Rules/` resolves case-insensitively · statistics match hand-computed fixtures ·
@@ -632,6 +707,9 @@ to enable full axe-core analysis (structural heuristics run regardless).
 | a storage backend | implement the repository Protocol, register in `build_repository()` | import it in an agent |
 | a network profile | add it to `network_profiles` in `config.yaml` | hardcode bandwidth |
 | an org threshold | add it to `policy.yaml` + `Policy` | bake it into a rule check |
+| a user journey | add it to `heuristic_journeys()` in `app/behaviour/brain.py`, gated on an observed affordance | assume the affordance exists |
+| a UX finding | add a block to `generate_findings()` citing `ActionRecord.seq` | write one without evidence |
+| a browser action the agent can take | add an `ActionKind`, a dispatch branch in `executor.py`, a category in `INTERACTION_CATEGORY` | let it bypass `safety.guard()` |
 
 ### House rules
 
@@ -644,3 +722,249 @@ to enable full axe-core analysis (structural heuristics run regardless).
 7. **One failure is scoped.** A `ComponentError` is recorded; the run continues.
 8. **Never invent a rule.** `Rules/` is the source of truth; recommendations go
    in documentation, not into the assessment.
+
+---
+
+## 15. The User Behaviour Agent
+
+A second product surface, added alongside the security assessment and sharing
+nothing with it but the browser, the LLM provider, the traffic budget and the
+safety layer. `Rules/` is not consulted here at all.
+
+The two answer different questions:
+
+| | Security assessment | User Behaviour Agent |
+|---|---|---|
+| asks | is this control satisfied? | what would a real user experience? |
+| source of truth | `Rules/` — 144 controls | the site itself |
+| interaction | one instrumented page load | an autonomous session, ~20-60 actions |
+| output | coverage, per-control verdicts | a UX score, findings, a journey |
+| entry points | `python -m app.main` · `POST /analyze` | `python -m app.behaviour` · `POST /behaviour` |
+
+```bash
+python -m app.behaviour --url https://example.com
+python -m app.behaviour --url https://example.com --dry-run     # plan + budget only
+python -m app.behaviour --url https://example.com --no-llm      # deterministic
+python -m app.behaviour --url https://example.com --headed --pacing 0.4
+python -m app.behaviour --url https://example.com --json out.json
+```
+
+Exit codes match `app/main.py`: `0` completed · `1` failed · `2` bad URL ·
+`4` blocked by the target · `130` interrupted.
+
+### 15.1 The loop
+
+```
+                        OBSERVE
+                           │  observer.py — DOM, a11y, structure, vitals
+                           ▼
+                       UNDERSTAND
+                           │  brain.py — what is this site? (1 LLM call)
+                           ▼
+                          PLAN
+                           │  brain.py — what journeys? (1 LLM call)
+                           ▼
+        ┌──────────────► DECIDE ◄──────────────┐
+        │                  │  what would a person do next?
+        │                  ▼
+        │                 ACT      executor.py — the only thing that
+        │                  │       touches the page
+        │                  ▼
+        │               MEASURE    measure.py — four clocks
+        │                  │
+        │                  ▼
+        │             OBSERVE AGAIN
+        │                  │
+        │            did it do what a
+        │            visitor would expect?
+        │             ┌────┴────┐
+        └── yes ──────┘         └────── no ──► ADAPT ──┐
+                                                       │
+        └──────────────────────────────────────────────┘
+                           │
+                           ▼
+                        REPORT      scoring.py + report.py — pure Python
+```
+
+The state machine (`AgentState`) is `DISCOVERING → UNDERSTANDING → PLANNING →
+NAVIGATING → INTERACTING → OBSERVING → MEASURING → ADAPTING → REPORTING →
+COMPLETED`, and the interface renders it live.
+
+### 15.2 The house rules, applied
+
+The repository's rules hold here unchanged, and each one is enforced
+structurally rather than by convention:
+
+| Rule | How |
+|---|---|
+| The LLM never computes | every latency, percentile and score comes from `measure.py` / `scoring.py` |
+| The LLM never drives the browser | it returns an `ActionIntent` naming a `ref` the observer already saw and classified; there is no path from a model response to a selector, a URL or a script |
+| Evidence first | a `UXFinding` cannot be constructed without `observed`, `expected` and the `ActionRecord.seq` values behind it |
+| Prefer UNKNOWN | an unobserved metric is `None`, never `0`; an undecidable outcome is `INCONCLUSIVE`, never a pass |
+| Every action names its reason | `ActionIntent.reason` is mandatory and reaches the report |
+| One failure is scoped | a journey that fails is recorded and the session continues |
+
+**The model plans; Python walks.** `understand` and `plan_journeys` are two
+LLM calls. Resolving a planned step against the elements on the page is
+deterministic — `llm_decides_steps` turns per-step model calls on, and it is
+off by default because it adds one round trip per action (~45 s each against
+a local 7B, so a 60-action session becomes a 45-minute one). `adapt` still
+calls the model: a failure has actually happened and the judgement earns its
+latency.
+
+**Every model call has a deadline.** `llm_call_timeout_seconds` (45 s) is not
+`llm.timeout_seconds` (the HTTP timeout, which has retries behind it). Past
+the deadline the heuristic answer is used, `derived_by` records `heuristic`,
+and the report says the model was too slow. A run with `--no-llm` is a
+heuristic agent, not a broken one.
+
+### 15.3 The four clocks
+
+§10 of the brief is the reason `measure.py` exists apart from the executor.
+"How fast is the site?" has several answers that routinely disagree by an
+order of magnitude:
+
+```
+dispatch ──► something reacted          input_latency_ms
+         ──► the user could SEE it      ui_response_ms
+         ──► the request came back      network_first_byte_ms / _complete_ms
+         ──► the page stopped changing  state_complete_ms
+```
+
+A button whose network call returns in 90 ms but whose spinner appears at
+600 ms is a slow button, and only the second clock says so. `perceived_ms` is
+the one the scores use: what the user saw, falling back to the network only
+when nothing was painted — which is itself the signature of the `UX-SILENT`
+finding.
+
+Three measurement hazards are handled explicitly, each discovered against
+`tests/fixtures/ux_site/`:
+
+* **Contamination.** Deferred work from the previous action — a 620 ms
+  debounce, a late banner — lands during the next measurement and is
+  attributed to it. A dead button gets credited with a response it did not
+  cause. `MeasurementEngine.isolate()` waits for the page to go still before
+  marking `t0`, and `PROBE_MARK` clears everything observed before it.
+* **Patience.** Concluding "no response" after a few hundred milliseconds
+  reports every debounced control on the web as broken. `no_response_ms`
+  (2.5 s) is deliberately much larger than `quiet_ms` (260 ms).
+* **Document replacement.** A navigation destroys the in-page probe, so
+  reading it afterwards returns null. Reporting that as "inconclusive" is how
+  a working link is counted as a broken one. Navigations are measured from
+  the new document's own navigation timing instead.
+
+**Never measured, never fabricated:** INP. It requires real users'
+interactions over a session. It serialises as `null` and always will.
+
+### 15.4 What the agent will not do
+
+The classifier in `app/behaviour/safety.py` decides this once, per element,
+before the model ever sees the page. `executor.py` asks only "is this
+cleared?", and a refusal becomes an `Outcome.REFUSED` record in the report —
+data, not a silent skip.
+
+* **FORBIDDEN, never dispatched:** place order · buy now · pay · transfer
+  funds · delete · close account · cancel an order · unsubscribe · empty the
+  cart · reset password · publish · post a comment · send a message · any
+  credential, card or identity field · `mailto:`/`tel:`/`javascript:` links.
+* **SENSITIVE, approached and never completed:** sign in · sign up ·
+  checkout · contact forms · start a trial. The agent may *reach* a checkout
+  page; it may not press the button that charges a card.
+* **No form is ever submitted.** The single exception is a search box, whose
+  entire payload is a query the agent wrote from the site's own words.
+* **One host.** Off-site links are inventoried and never followed.
+* **Blocks are reported, not routed around** — `antibot.detect()` halts the
+  session, exactly as in §11.
+
+On human pacing: the agent hovers before clicking, pauses after navigating,
+and scrolls in steps. This is a *measurement* requirement, not an evasion
+one — a hover menu never opens if you teleport the cursor onto the link, and
+lazy content never arrives if you jump to the footer, so a robotic agent
+measures a page no user ever sees. The browser still identifies itself
+normally and carries no stealth patches.
+
+### 15.5 Scoring
+
+`scoring.py` is pure. Seven components, each carrying its own sample size:
+
+`Interaction Speed` · `Navigation` · `Responsiveness` · `Visual Experience` ·
+`Accessibility` · `Interaction Reliability` · `Scroll Experience`
+
+Three refusals define it:
+
+1. **A component with no observations scores `None` and is excluded** from
+   the weighted mean — never scored zero. A site where nothing was scrollable
+   is not punished for it, and `UNRATED` is a real outcome.
+2. **The sample size travels with the number.** "Navigation: 88" off two page
+   loads is not the claim "88" off twenty.
+3. **Every threshold is published and named at the point of use** — RAIL's
+   100 ms / 1 s, Core Web Vitals' LCP and CLS boundaries. Where none exists
+   (scroll smoothness, reliability) the boundary is arithmetic on the frame
+   budget or a plain ratio, and says so.
+
+`Accessibility` is structural only and labelled as such: automated tooling
+reaches a minority of WCAG 2.2 criteria — the same limit §13/A8 records for
+`A11Y-01`.
+
+### 15.6 Modules
+
+```
+app/behaviour/
+  models.py      three vocabularies: what was SEEN, DONE, CONCLUDED
+  safety.py      the classifier — what may and may not be touched
+  js.py          the injected probes; the only code that runs in the target's origin
+  observer.py    DOM + a11y + structure + vitals -> PageModel
+  measure.py     the four clocks, scroll frames, the isolate/settle lifecycle
+  memory.py      visited / tried / dead / learned — what stops a random walk
+  brain.py       understand, plan, decide, adapt — each with a full heuristic
+  prompts.py     four prompts, one per question the model may answer
+  executor.py    the only module that touches the page
+  scoring.py     UX score + findings, pure
+  report.py      journey timeline, insights, summaries
+  agent.py       the loop, the state machine, and the four brakes
+  runner.py      one session, driven identically from CLI and API
+  serializers.py projection onto web/lib/behaviourTypes.ts
+  main.py        CLI
+app/api/behaviour.py   the /behaviour router, mounted alongside /analyze
+```
+
+**Four independent brakes**, any one of which ends a session cleanly: the
+traffic budget · a per-journey step ceiling · a global action ceiling ·
+consecutive-failure detection per journey. A block from the target is not a
+brake — it is an answer.
+
+### 15.7 The interface
+
+`web/components/behaviour/` — the journey map with the travelling pixel agent
+(§14), the live HUD (§15), the agent log (§16), the score dial (§17) and the
+report (§18-20, §24). `web/lib/fluid.ts` is the scroll engine §13 asks for.
+
+Two notes worth keeping:
+
+* **Velocity, not position.** Most "smooth scroll" lerps the scroll position
+  toward a target, which literally delays the content behind the user's
+  input: smooth, and slower. `fluid.ts` leaves the position honest and
+  interpolates the *reaction* — signed velocity is published to `--v`/`--va`
+  on `<html>` from one rAF loop, and animations scale with it. Fast **and**
+  smooth, which is what §13 asks for and what most implementations get
+  backwards.
+* **Accumulate in the callback, not the render.** React batches state
+  updates, and the SSE stream replays its whole history the moment the
+  browser subscribes — so a dozen frames can collapse into one render.
+  Anything carried by exactly one frame is then lost, and the journey map is
+  carried by exactly one frame. The map and the visited trail are accumulated
+  in the message callback, which runs once per message.
+
+### 15.8 Known gaps and decisions
+
+| # | Issue | Resolution |
+|---|---|---|
+| B1 | "Perceived response" has no single definition | four clocks, all reported; `perceived_ms` is defined and documented (§15.3) |
+| B2 | Deferred work contaminates the next measurement | `isolate()` before `mark()`; the report notes when a page never went still |
+| B3 | A debounced control looks dead under a short patience | `no_response_ms` is 2.5 s, an order above `quiet_ms` |
+| B4 | Focus is a real response for a field and a non-response for a button | focus feeds `input_latency_ms` always, and `ui_response_ms` only for text fields |
+| B5 | A hover that opens nothing is not a defect | only *pressed* actions can mark a control dead or produce `UX-DEAD` |
+| B6 | Journey completion cannot be inferred from the action log | recovery actions reuse their step label; the loop's own bookkeeping decides |
+| B7 | A local 7B is too slow for a per-step call | `llm_decides_steps: false`, plus a deadline on every call (§15.2) |
+| B8 | INP cannot be produced by a lab agent | always `null`, and the report says why |
+| B9 | The agent's exploration order is not deterministic | session-level tests assert on properties; the specific measurements are pinned by driving the executor directly |

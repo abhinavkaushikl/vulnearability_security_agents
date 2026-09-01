@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fixture Store — behaviour test target</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <a class="skip" href="#main">Skip to content</a>
+  <nav aria-label="Main">
+    <a href="/">Fixture Store</a>
+    <button id="menu" aria-expanded="false" aria-haspopup="menu">Menu</button>
+    <a href="/catalog.html">Catalog</a>
+    <a href="/login.html">Sign in</a>
+    <a href="/cart.html" id="cartlink">Cart (<span id="count">0</span>)</a>
+    <!-- Deliberate defect: an icon-only control with no accessible name. -->
+    <button id="icon" class="icon"></button>
+  </nav>
+  <div id="dropdown" hidden role="menu">
+    <a href="/catalog.html" role="menuitem">All products</a>
+    <a href="/about.html" role="menuitem">About</a>
+  </div>
+</header>
+
+<main id="main">
+  <h1>Everything for the home</h1>
+  <form id="searchform" role="search" onsubmit="return doSearch(event)">
+    <label for="q">Search</label>
+    <input id="q" name="q" type="search" placeholder="Search products">
+    <button type="submit">Go</button>
+  </form>
+  <ul id="suggest" hidden></ul>
+
+  <h2>Featured products</h2>
+  <div class="grid">
+    <article class="product"><a href="/product.html?sku=1">Copper Kettle</a>
+      <p>£38.00</p></article>
+    <article class="product"><a href="/product.html?sku=2">Linen Throw</a>
+      <p>£64.00</p></article>
+    <article class="product"><a href="/product.html?sku=3">Oak Stool</a>
+      <p>£120.00</p></article>
+  </div>
+
+  <h2>Why shop with us</h2>
+  <p class="filler">Free delivery over £50. Thirty-day returns.</p>
+  <div class="tall">
+    <h3>More reasons</h3>
+    <p class="filler">A long section so the page is genuinely scrollable and the
+    agent has somewhere to go.</p>
+  </div>
+
+  <!-- Deliberate defect: a button with no handler bound at all. -->
+  <button id="dead">Join the mailing list</button>
+
+  <h2>Newsletter</h2>
+  <div id="results"></div>
+</main>
+
+<footer><p>Fixture Store — a deliberately imperfect test target.</p></footer>
+<script src="/app.js"></script>
+</body>
+</html>

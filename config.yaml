@@ -22,7 +22,7 @@ assessment:
   mode: passive           # passive | authenticated. Anything but passive needs
                           # an authorization_reference (GOV-02).
   authorization_reference: null
-  max_pages: 10
+  max_pages: 20
   max_navigation_count: 20
   max_concurrent_contexts: 4
   max_concurrent_evaluations: 4   # bounded fan-out for a local 7B model
@@ -46,6 +46,33 @@ network_profiles:
   4g:   {download_mbps: 9.0,   upload_mbps: 3.0,   latency_ms: 85}
   3g:   {download_mbps: 1.6,   upload_mbps: 0.75,  latency_ms: 300}
   slow: {download_mbps: 0.4,   upload_mbps: 0.4,   latency_ms: 800}
+
+behaviour:
+  # User Behaviour Agent (app/behaviour/). Additive — the security assessment
+  # ignores every key here.
+  enabled: true
+  max_actions: 60             # hard ceiling on dispatched actions per session
+  max_steps_per_journey: 10   # one stubborn flow cannot eat the whole session
+  max_navigations: 24         # counted in the SAME TrafficBudget as the scan
+  pacing: 1.0                 # human pause multiplier; 0 = no pauses
+  settle_quiet_ms: 260        # DOM must be still this long to call an action done
+  settle_max_ms: 4500         # ceiling on waiting for that stillness
+  max_elements: 220           # inventory cap per page
+  keyboard_walk_steps: 12     # Tab presses sampled for focus visibility
+  screenshots: true
+  seed: null                  # set an integer to reproduce a run's pacing exactly
+  timeout_seconds: 600
+  # Ask the model for every individual step, not just the plan. OFF by default:
+  # the model decides what the site IS and what journeys to walk (2 calls);
+  # walking them is deterministic resolution against the observed elements.
+  # Turning this on adds one round trip per action — against a local 7B that is
+  # ~45s each, so a 60-action session becomes a 45-minute one.
+  llm_decides_steps: false
+  # A deadline on one model call. Past it the deterministic answer is used and
+  # the report records `derived_by: heuristic`. This is not llm.timeout_seconds
+  # (the HTTP timeout, which has retries behind it) — it is how long the agent
+  # will wait before getting on with measuring.
+  llm_call_timeout_seconds: 45
 
 screenshots:
   enabled: true
