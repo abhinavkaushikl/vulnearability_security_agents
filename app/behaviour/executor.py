@@ -42,6 +42,55 @@ from app.safety.limits import BudgetExceeded, TrafficBudget
 
 log = logging.getLogger(__name__)
 
+#: Playwright reports WHY a click could not land in its call log, and that
+#: reason is the whole finding: "something covers this control" and "this
+#: control is still animating" are different defects with different fixes.
+#: The reason sits at the END of a long message, so a naive head-slice keeps
+#: the useless prefix and discards the diagnosis.
+_ACTIONABILITY = (
+    ("intercepts pointer events", "another element covers it"),
+    ("element is not stable", "it was still moving"),
+    ("element is not visible", "it was not visible"),
+    ("element is not enabled", "it was disabled"),
+    ("element is outside of the viewport", "it was outside the viewport"),
+    ("element is not attached", "it left the page"),
+    ("did not receive pointer events", "it does not receive pointer events"),
+)
+
+
+def describe_dispatch_failure(exc: Exception) -> tuple[str, str | None]:
+    """(what to record, the actionability reason if there was one).
+
+    Returns a compact sentence that keeps the diagnosis rather than the
+    boilerplate. The raw message is still logged in full; this is what a
+    reader of the report sees.
+    """
+    raw = str(exc) or exc.__class__.__name__
+    low = raw.lower()
+
+    reason = None
+    for needle, phrasing in _ACTIONABILITY:
+        if needle in low:
+            reason = phrasing
+            break
+
+    # The covering element, when Playwright names it, is the actionable part.
+    blocker = ""
+    if reason and "intercepts pointer events" in low:
+        for line in raw.splitlines():
+            if "intercepts pointer events" in line.lower():
+                blocker = line.strip().lstrip("- ").strip()
+                break
+
+    if reason:
+        head = raw.split("\n", 1)[0].strip()
+        detail = f" — {blocker[:110]}" if blocker else ""
+        return f"{head} the action could not land because {reason}{detail}", reason
+
+    # Not an actionability failure: keep the first line, which is the message.
+    return f"{type(exc).__name__}: {raw.splitlines()[0][:180]}", None
+
+
 #: Actions that can change the document. Used to decide whether to re-observe
 #: from scratch and whether a URL change is expected or a surprise.
 _NAVIGATIONAL = {ActionKind.NAVIGATE, ActionKind.BACK, ActionKind.CLICK,
@@ -209,9 +258,17 @@ class ActionExecutor:
             raise
         except Exception as exc:                                # noqa: BLE001
             record.outcome = Outcome.ERROR
-            record.observed = f"{type(exc).__name__}: {str(exc)[:180]}"
-            record.note = "the action could not be dispatched"
-            log.debug("dispatch failed: %s", exc)
+            observed, reason = describe_dispatch_failure(exc)
+            record.observed = observed
+            record.blocked_reason = reason
+            record.note = (
+                "the control could not be actioned; this is a usability "
+                "defect, not a tooling failure" if reason else
+                "the action could not be dispatched")
+            # The full message, call log and all, goes to the log rather than
+            # the report — the report keeps the diagnosis, the log keeps
+            # everything needed to reproduce it.
+            log.warning("dispatch failed on %r: %s", record.element_label, exc)
             await self.engine.stop_frames(self.page)
             return record
 

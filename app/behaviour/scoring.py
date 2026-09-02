@@ -332,6 +332,40 @@ def _scroll(actions: list[ActionRecord]) -> ScoreComponent:
                + (f", {dropped} dropped frames of {frames}" if frames else "")))
 
 
+def describe_degradation(*, model_timeouts: int = 0, model_calls: int = 0,
+                         budget_stopped: bool = False,
+                         ceiling_hit: bool = False,
+                         actions_dispatched: int = 0,
+                         planned_journeys: int = 0,
+                         journeys_run: int = 0) -> list[str]:
+    """Plain statements about how this session fell short of a full one.
+
+    Pure, and deliberately free of judgement: it says what happened, and the
+    reader decides how much the score is worth. Empty means the session ran
+    as designed, which is the only case where the headline score stands
+    unqualified.
+    """
+    notes: list[str] = []
+    if model_timeouts:
+        of = f" of {model_calls}" if model_calls else ""
+        notes.append(
+            f"{model_timeouts}{of} model call(s) exceeded their deadline; the "
+            f"deterministic heuristic decided those, so this session explored "
+            f"less than a model-guided one would")
+    if budget_stopped:
+        notes.append("the traffic or time budget ended the session before it "
+                     "finished its plan")
+    if ceiling_hit:
+        notes.append("an action or step ceiling cut a journey short")
+    if planned_journeys and journeys_run < planned_journeys:
+        notes.append(f"{journeys_run} of {planned_journeys} planned journeys "
+                     f"were attempted")
+    if actions_dispatched and actions_dispatched < 10:
+        notes.append(f"only {actions_dispatched} action(s) were dispatched, "
+                     f"which is a small sample for any component")
+    return notes
+
+
 def compute_score(actions: list[ActionRecord], page_models: list[PageModel],
                   pages: list[PageVisit]) -> UXScore:
     """§17. The whole score, in one pure function."""
@@ -412,6 +446,39 @@ def generate_findings(actions: list[ActionRecord], page_models: list[PageModel],
                             "press even when the work behind it is slow."),
             seqs=[a.seq for a in dead][:10],
             url=dead[0].page_url))
+
+    # ── controls the browser could not action ────────────────────────────
+    #
+    # A control that cannot be clicked because a modal covers it, or because
+    # it is still animating, is one of the most actionable defects there is:
+    # the user sees an affordance and cannot use it. It previously showed up
+    # only as a silent dent in the reliability score, which told nobody what
+    # was wrong.
+    obscured = [a for a in actions if a.outcome is Outcome.ERROR
+                and a.blocked_reason]
+    if obscured:
+        reasons = sorted({a.blocked_reason for a in obscured if a.blocked_reason})
+        labels = sorted({a.element_label for a in obscured if a.element_label})[:5]
+        covered = any("cover" in (r or "") for r in reasons)
+        out.append(_finding(
+            "UX-OBSCURED", "Controls the browser could not action",
+            "reliability",
+            Severity.HIGH if covered else Severity.MEDIUM,
+            observed=(f"{len(obscured)} control(s) could not be actioned "
+                      f"({'; '.join(reasons)}): "
+                      + ", ".join(f"{l!r}" for l in labels)),
+            expected="a visible control can be clicked where it appears",
+            impact=("A control the user can see but cannot press reads as a "
+                    "broken site. When an overlay is the cause, every control "
+                    "beneath it is unusable while it is open — and a real user "
+                    "has no way to know that is why."),
+            recommendation=("Check what sits above these controls at the moment "
+                            "they are offered — consent banners, login modals "
+                            "and sticky headers are the usual causes. If an "
+                            "overlay is intentional, make it dismissible and "
+                            "keep it off the controls underneath."),
+            seqs=[a.seq for a in obscured][:10],
+            url=obscured[0].page_url))
 
     # ── slow interactions, by category ───────────────────────────────────
     by_cat = latencies_by_category(actions)

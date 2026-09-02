@@ -17,6 +17,7 @@ import logging
 import sys
 from pathlib import Path
 
+from app import observability
 from app.behaviour.models import AgentState, BehaviourProgress, Severity
 from app.behaviour.runner import InvalidTarget, SessionOptions, run_session
 from app.behaviour.serializers import to_json
@@ -80,6 +81,14 @@ def render(report, colour: bool) -> str:
         add(f"  {_c('UNRATED', _DIM, colour)} — too little was observable to "
             "put a number on it")
     add(f"  {_DIM if colour else ''}{score.method}{_RESET if colour else ''}")
+    # A degraded session's score is printed WITH its caveat or not at all —
+    # the caveat is not an appendix, it is part of the number's meaning.
+    if score.degraded:
+        add("")
+        add(f"  {_c('READ WITH CARE', _AMBER, colour)} — this session did not "
+            "run to plan:")
+        for note in score.degradation:
+            add(f"    · {note}")
     add("")
     for c in score.components:
         value = f"{c.score:>3}" if c.score is not None else "  —"
@@ -284,10 +293,11 @@ async def _run(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(
-        level=logging.WARNING,
-        format="%(asctime)s %(levelname)-7s %(name)-22s %(message)s",
-        datefmt="%H:%M:%S")
+    # The CLI's own output IS the report, so the log stays at WARNING on the
+    # console unless the environment asks for more.
+    observability.configure(
+        level=observability.logging.level_from_env("WARNING"),
+        console=True, force=True)
     try:
         return asyncio.run(_run(args))
     except KeyboardInterrupt:

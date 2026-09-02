@@ -1,0 +1,33 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Node (web/ has its own .dockerignore)
+web/node_modules/
+web/.next/
+
+# Artifacts and caches (mounted as volumes instead)
+artifacts/
+.cache/
+
+# Git and IDE
+.git/
+.gitignore
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Environment files with secrets
+.env
+.env.local
+
+# Documentation (not needed in image)
+CLAUDE.md
+
+# Tests and fixtures (not needed in production image)
+tests/

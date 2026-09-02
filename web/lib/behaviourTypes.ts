@@ -48,6 +48,10 @@ export interface UXScore {
   band: ScoreBand;
   method: string;
   observations: number;
+  /** The session that produced this score was itself cut short or fell back
+   *  to heuristics. The number still stands, but not unqualified. */
+  degraded: boolean;
+  degradation: string[];
   components: ScoreComponent[];
 }
 

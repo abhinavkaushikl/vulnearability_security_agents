@@ -52,6 +52,8 @@ def to_json(report: BehaviourReport) -> dict:
             "band": report.score.band.value,
             "method": report.score.method,
             "observations": report.score.observations,
+            "degraded": report.score.degraded,
+            "degradation": list(report.score.degradation),
             "components": [
                 {"name": c.name, "score": c.score, "n": c.n, "basis": c.basis}
                 for c in report.score.components],

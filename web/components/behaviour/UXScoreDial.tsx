@@ -103,6 +103,27 @@ export default function UXScoreDial({ score }: { score: UXScore }) {
                     letterSpacing: "0.05em" }}>
           {score.method}.
         </p>
+
+        {/* A degraded session's number is shown WITH what qualifies it, or it
+            misleads. Each component already carries its sample size; none of
+            them can say "this run did not finish". */}
+        {score.degraded && score.degradation?.length > 0 && (
+          <div className="mono mt-4 leading-relaxed"
+               style={{ borderLeft: "2px solid var(--color-accent)",
+                        paddingLeft: "0.9rem", textTransform: "none",
+                        letterSpacing: "0.05em" }}>
+            <p style={{ color: "var(--color-accent)" }}>READ WITH CARE</p>
+            <p className="mt-1" style={{ color: "var(--color-dim)" }}>
+              This session did not run to plan, so the score describes less of
+              the site than a full run would:
+            </p>
+            <ul className="mt-2" style={{ color: "var(--color-dim)" }}>
+              {score.degradation.map((note, i) => (
+                <li key={i} className="mt-1">· {note}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,0 +1,44 @@
+# docker-compose up --build
+# Backend on :8000, frontend on :3000.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentqa-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - AGENTQA_HOST=0.0.0.0
+      - AGENTQA_PORT=8000
+      # Point at Ollama on the host machine (Docker Desktop).
+      # On Linux without Docker Desktop, use the host's LAN IP instead.
+      - LLM_ENDPOINT=http://host.docker.internal:11434
+    volumes:
+      # Persist reports and cache across restarts
+      - ./artifacts:/app/artifacts
+      - ./.cache:/app/.cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        # The browser talks to the backend through the host's published port,
+        # not through the Docker network, because this is a client-side call.
+        NEXT_PUBLIC_AGENTQA_API: http://localhost:8000
+    container_name: agentqa-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

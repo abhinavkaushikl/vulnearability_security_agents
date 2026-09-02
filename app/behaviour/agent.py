@@ -99,6 +99,9 @@ class UserBehaviourAgent:
         self.page_models: list[PageModel] = []
         self.journeys: list[Journey] = []
         self.errors: list[str] = []
+        #: entry -> how many times it fired, so a handler that
+        #: throws on every interaction is one line, not twenty.
+        self._error_counts: dict[str, int] = {}
         self.blocked_reason: str | None = None
         self.current_objective = "Reaching the target"
         self.current_action = ""
@@ -179,8 +182,7 @@ class UserBehaviourAgent:
         try:
             ctx = await self.session.new_context(label="behaviour")
             page = await self.session.open_page(ctx)
-            page.on("pageerror", lambda e: self.errors.append(
-                f"page error: {str(e)[:160]}"))
+            page.on("pageerror", self._record_page_error)
 
             await self._discover(page)
             if self.blocked_reason:
@@ -211,6 +213,47 @@ class UserBehaviourAgent:
                 await self.session.close_context(ctx)
 
         return self._finish(started_at, AgentState.COMPLETED)
+
+    # ── page errors ──────────────────────────────────────────────────────
+    def _record_page_error(self, err) -> None:
+        """Record one uncaught page error, with enough detail to act on.
+
+        Two things this deliberately does not do. It does not report the bare
+        message alone: a minified bundle that runs `throw "he"` produces a
+        two-character message with no name and no stack, and "page error: he"
+        is not something anyone can fix. Where a real Error was thrown the
+        first stack frame locates it; where a non-Error value was thrown,
+        saying so IS the diagnosis, because it means the site is throwing
+        something that carries no stack at all.
+
+        It also does not append duplicates. The same handler firing twenty
+        times is one defect, not twenty, and letting it fill the report's
+        error list hides every other error in the run behind it.
+        """
+        message = (str(err) or "").strip()
+        name = (getattr(err, "name", "") or "").strip()
+        stack = (getattr(err, "stack", "") or "").strip()
+
+        if stack:
+            # The first frame below the message line is where it was thrown.
+            frames = [ln.strip() for ln in stack.splitlines()[1:] if ln.strip()]
+            where = f" at {frames[0][:90]}" if frames else ""
+        elif not name:
+            where = " (a non-Error value was thrown, so there is no stack)"
+        else:
+            where = ""
+
+        label = f"{name}: {message}" if name else message or "<empty>"
+        entry = f"page error: {label[:160]}{where}"
+
+        for i, seen in enumerate(self.errors):
+            if seen.startswith(entry):
+                count = self._error_counts.get(entry, 1) + 1
+                self._error_counts[entry] = count
+                self.errors[i] = f"{entry} (x{count})"
+                return
+        self._error_counts[entry] = 1
+        self.errors.append(entry)
 
     # ── phase 1: discovery ───────────────────────────────────────────────
     async def _discover(self, page: Page) -> None:
@@ -594,6 +637,23 @@ class UserBehaviourAgent:
         models = list(unique_models.values())
 
         score = scoring.compute_score(self.actions, models, pages)
+        # The score is only as good as the session that produced it. Each
+        # component already carries its sample size; this carries the fact
+        # that the run itself was cut short or fell back to heuristics, which
+        # no sample size can express. §17 leads with coverage for the same
+        # reason the security engine does.
+        ceiling_hit = any(
+            (st.get("reason") or "").endswith("ceiling was reached")
+            for st in self._journey_progress.values())
+        score.degradation = scoring.describe_degradation(
+            model_timeouts=self.brain.model_timeouts,
+            model_calls=self.brain.model_calls,
+            budget_stopped=any("budget" in e for e in self.errors),
+            ceiling_hit=ceiling_hit,
+            actions_dispatched=len(self.actions),
+            planned_journeys=len(self.journeys),
+            journeys_run=self._journeys_done)
+        score.degraded = bool(score.degradation)
         findings = scoring.generate_findings(self.actions, models, pages,
                                              outcomes)
         perceived = [a.timing.perceived_ms for a in self.actions
@@ -640,7 +700,13 @@ class UserBehaviourAgent:
         report.summary = report_mod.deterministic_summary(report)
         report.insights = report_mod.behavioural_insights(report)
         self.state = report.state
-        self._emit()
+        # Deliberately NOT emitted. A terminal state on the progress feed is
+        # the signal a client uses to stop listening and ask for the report,
+        # and the report does not exist yet: `write_summary` still has a model
+        # call to make after this returns. Announcing COMPLETED here raced the
+        # caller into a 409 and left the interface with nothing to render.
+        # The terminal event is the caller's to publish, once it holds the
+        # finished report.
         return report
 
     async def write_summary(self, report: BehaviourReport) -> None:
@@ -649,8 +715,28 @@ class UserBehaviourAgent:
         It runs on the finished report, so there is nothing left for it to
         change: the score, the findings and the severities already exist, and
         the deterministic summary is the fallback if it returns nothing.
+
+        It also runs INSIDE the budget. Previously it did not, so a slow model
+        pushed the reported duration past the configured timeout — a timeout
+        that does not bound the run is not a timeout. When there is no time
+        left the deterministic summary stands, which is what it is for.
         """
         if not self.brain.enabled:
             return
+        remaining = self.budget.remaining_seconds
+        if remaining <= 1.0:
+            log.info("no budget left for the summary call; keeping the "
+                     "deterministic summary")
+            report.errors.append(
+                "the run was out of time before the written summary; the "
+                "deterministic summary is used instead")
+            return
         facts = report_mod.summary_facts(report)
-        report.summary = await self.brain.summarise(facts, report.summary)
+        # Never wait longer than the budget allows, whatever the call deadline.
+        original = self.brain.call_timeout
+        self.brain.call_timeout = min(original, remaining)
+        try:
+            report.summary = await self.brain.summarise(facts, report.summary)
+        finally:
+            self.brain.call_timeout = original
+        report.duration_seconds = round(time.monotonic() - self._started, 1)

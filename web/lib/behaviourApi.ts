@@ -77,9 +77,18 @@ function live(url: string, onProgress: (p: BehaviourProgress) => void,
       };
     });
 
-    const rep = await fetch(`${API}/behaviour/${id}`);
-    if (!rep.ok) throw new Error(`the report could not be read (${rep.status})`);
-    return (await rep.json()) as BehaviourReport;
+    // 409 means the run is finished but the report is not yet stored — a
+    // narrow window the server closes on its side too. Retrying briefly costs
+    // nothing and is the difference between a rendered report and a dead
+    // screen; any other status is a real error and is raised at once.
+    for (let attempt = 0; ; attempt++) {
+      const rep = await fetch(`${API}/behaviour/${id}`);
+      if (rep.ok) return (await rep.json()) as BehaviourReport;
+      if (rep.status !== 409 || attempt >= 10) {
+        throw new Error(`the report could not be read (${rep.status})`);
+      }
+      await new Promise((r) => setTimeout(r, 600));
+    }
   })();
 
   return {

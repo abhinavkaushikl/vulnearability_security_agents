@@ -41,6 +41,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.behaviour import BehaviourManager, build_router
+from app import observability
 from app.api.runner import InvalidTarget, RunManager, RunOptions
 
 log = logging.getLogger("assessment.api")
@@ -181,10 +182,13 @@ app = create_app()
 def main() -> None:
     import uvicorn
 
-    logging.basicConfig(
-        level=os.environ.get("AGENTQA_LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)-7s %(name)-28s %(message)s",
-        datefmt="%H:%M:%S")
+    # One configuration for every entry point. The server also keeps a
+    # process-wide JSON log, because a server outlives any single run and
+    # the interesting failures are the ones between runs.
+    observability.configure(
+        level=observability.logging.level_from_env(),
+        console=True,
+        json_path=os.environ.get("AGENTQA_LOG_FILE", "artifacts/agentqa.jsonl"))
 
     host = os.environ.get("AGENTQA_HOST", "127.0.0.1")
     port = int(os.environ.get("AGENTQA_PORT", "8000"))

@@ -378,6 +378,11 @@ class ActionRecord(BaseModel):
     new_url: str | None = None
     console_errors: list[str] = Field(default_factory=list)
     note: str = ""
+    #: Why the browser could not action this control, when that is the reason
+    #: it failed — "another element covers it", "it was still moving". Set
+    #: only for a real actionability failure, which is a defect in the site
+    #: rather than in the agent, and is what UX-OBSCURED reports.
+    blocked_reason: str | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -462,6 +467,13 @@ class UXScore(BaseModel):
     components: list[ScoreComponent] = Field(default_factory=list)
     method: str = ""
     observations: int = 0
+    #: Whether the session that produced this score was itself degraded — the
+    #: model fell back to heuristics, a ceiling cut the exploration short, or
+    #: the budget ended it. Each component already carries its sample size,
+    #: but a sample size cannot say "this run did not finish". A score read
+    #: without that caveat is the one way this report can still mislead.
+    degraded: bool = False
+    degradation: list[str] = Field(default_factory=list)
 
 
 class JourneyOutcome(BaseModel):

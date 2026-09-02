@@ -32,6 +32,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app import observability
 from app.behaviour.models import AgentState, BehaviourProgress
 from app.behaviour.runner import InvalidTarget, SessionOptions, run_session
 from app.behaviour.serializers import to_json
@@ -149,19 +150,20 @@ class BehaviourManager:
         return True
 
     async def _execute(self, s: Session) -> None:
-        handler: logging.Handler | None = None
+        #: The session's logging scope. See app/observability/logging.py for
+        #: why this is a contextvar scope rather than a root handler: two
+        #: sessions may run concurrently, and each one's log must contain only
+        #: its own lines.
+        log_scope = None
         try:
             async with self._gate:
                 from app.config.settings import load_settings
                 settings = load_settings(self.config, self.policy,
                                          s.options.overrides())
-                log_path = settings.log_path(s.id)
-                if log_path:
-                    Path(log_path).parent.mkdir(parents=True, exist_ok=True)
-                    handler = logging.FileHandler(log_path)
-                    handler.setFormatter(logging.Formatter(
-                        "%(asctime)s %(levelname)-7s %(name)-24s %(message)s"))
-                    logging.getLogger().addHandler(handler)
+                log_scope = observability.run_scope(
+                    s.id, kind="behaviour", target=s.target,
+                    log_path=settings.log_path(s.id))
+                log_scope.__enter__()
 
                 s.budget = TrafficBudget(
                     max_navigations=settings.behaviour.max_navigations,
@@ -177,7 +179,10 @@ class BehaviourManager:
                                          if s.budget else 0)
                     s.publish(event)
 
-                log.info("behaviour session %s starting — %s", s.id, s.target)
+                observability.event(
+                    log, "session_started",
+                    f"behaviour session {s.id} starting — {s.target}",
+                    target=s.target, max_actions=s.options.max_actions)
                 report = await run_session(
                     s.target, session_id=s.id, config=self.config,
                     policy=self.policy, options=s.options, progress=sink,
@@ -228,9 +233,8 @@ class BehaviourManager:
                        "journeys_done": 0, "journeys_total": 0,
                        "thought": None, "node": None, "map_nodes": None})
         finally:
-            if handler is not None:
-                logging.getLogger().removeHandler(handler)
-                handler.close()
+            if log_scope is not None:
+                log_scope.__exit__(None, None, None)
 
 
 def build_router(manager: BehaviourManager) -> APIRouter:

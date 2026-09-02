@@ -156,10 +156,13 @@ def deterministic_summary(report: BehaviourReport) -> str:
         f"interactions.")
 
     if score.overall is not None:
+        caveat = (" This session did not run to plan, so the number describes "
+                  "less of the site than a full run would."
+                  if score.degraded else "")
         parts.append(
             f"The experience scores {score.overall}/100 ({score.band.value.lower()}), "
             f"weighted over {len([c for c in score.components if c.score is not None])} "
-            f"measured components.")
+            f"measured components.{caveat}")
     else:
         parts.append("Too little was observable to put a number on the "
                      "experience, so none is claimed.")

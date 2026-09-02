@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from app import observability
 from app.api.progress import ORDER, STAGES, Progress, Stage
 from app.api.serializers import to_report
 from app.config.settings import load_settings
@@ -260,7 +261,9 @@ class RunManager:
         """Drive the graph. Mirrors app/main.py::run_assessment."""
         heartbeat: asyncio.Task | None = None
         session: BrowserSession | None = None
-        handler: logging.Handler | None = None
+        #: The run's logging scope. Explicit lifecycle, unwound in `finally`
+        #: on every path — the same discipline the browser session follows.
+        log_scope = None
         started = time.monotonic()
 
         try:
@@ -270,17 +273,21 @@ class RunManager:
                 artifact_dir = settings.artifact_dir(run.id)
                 artifact_dir.mkdir(parents=True, exist_ok=True)
 
-                # Per-run log file, without touching global logging config —
-                # a server must not reconfigure the root logger per request.
-                log_path = settings.log_path(run.id)
-                if log_path:
-                    Path(log_path).parent.mkdir(parents=True, exist_ok=True)
-                    handler = logging.FileHandler(log_path)
-                    handler.setFormatter(logging.Formatter(
-                        "%(asctime)s %(levelname)-7s %(name)-28s %(message)s"))
-                    logging.getLogger().addHandler(handler)
+                # Per-run log, isolated by a contextvar rather than by hope.
+                # The previous approach attached this handler to the root
+                # logger unfiltered, so with two runs in flight — which the
+                # semaphore explicitly allows — each run's file collected the
+                # other's lines. run_scope binds the run to this task and
+                # admits only records emitted inside it.
+                log_scope = observability.run_scope(
+                    run.id, kind="assessment", target=run.target,
+                    log_path=settings.log_path(run.id))
+                log_scope.__enter__()
 
-                log.info("run %s starting — target %s", run.id, run.target)
+                observability.event(
+                    log, "run_started", f"run {run.id} starting — target {run.target}",
+                    target=run.target, families=list(run.families or []),
+                    skip_performance=bool(run.skip_performance))
 
                 provider = build_provider(settings.llm)
                 llm_available = False
@@ -368,9 +375,8 @@ class RunManager:
                 heartbeat.cancel()
             if session is not None:
                 await session.close()
-            if handler is not None:
-                logging.getLogger().removeHandler(handler)
-                handler.close()
+            if log_scope is not None:
+                log_scope.__exit__(None, None, None)
 
     async def _heartbeat(self, run: Run) -> None:
         """Keep the SSE connection warm and the request counter live."""

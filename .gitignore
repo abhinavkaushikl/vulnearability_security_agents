@@ -4,5 +4,8 @@ __pycache__/
 artifacts/
 .cache/
 .env
+.env.local
 .DS_Store
 *.tmp.xlsx
+web/node_modules/
+web/.next/

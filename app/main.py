@@ -27,22 +27,20 @@ from app.models.assessment import AssessmentStatus
 from app.repositories.base import build_repository
 from app.safety.limits import TrafficBudget
 from app.tools.browser import BrowserSession
+from app import observability
 from app.tools.report import render_console_report
 
 log = logging.getLogger("assessment")
 
 
 def setup_logging(level: str, log_file: Path | None) -> None:
-    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
-    if log_file:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        handlers.append(logging.FileHandler(log_file))
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)-7s %(name)-28s %(message)s",
-        datefmt="%H:%M:%S", handlers=handlers, force=True)
-    for noisy in ("httpx", "httpcore", "asyncio", "urllib3"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    """Delegates to the one configuration in app/observability.
+
+    Kept as a function because the CLI and its tests call it by name; it owns
+    no formatting decisions of its own any more.
+    """
+    observability.configure(level=level, console=True, json_path=log_file,
+                            force=True)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
